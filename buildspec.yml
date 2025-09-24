@@ -2,7 +2,7 @@ version: 0.2
 
 env:
   variables:
-    IMAGE_REPO_NAME: hello-docker
+    IMAGE_REPO_NAME: hello-world
     AWS_REGION: us-east-1      # change to your region
 
 phases:
@@ -10,8 +10,8 @@ phases:
     commands:
       - echo Logging in to Amazon ECR...
       - aws --version
-      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.$AWS_REGION.amazonaws.com
-      - REPO_URI=<ACCOUNT_ID>.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin 005878674861.dkr.ecr.us-east-1.amazonaws.com
+      - REPO_URI=005878674861.dkr.ecr.us-east-1.amazonaws.com/hello-world
   build:
     commands:
       - echo Building the Docker image...
