@@ -10,7 +10,7 @@ phases:
     commands:
       - echo Logging in to Amazon ECR...
       - aws --version
-      - aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin 005878674861.dkr.ecr.us-east-1.amazonaws.com
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 005878674861.dkr.ecr.us-east-1.amazonaws.com
       - REPO_URI=005878674861.dkr.ecr.us-east-1.amazonaws.com/hello-world
   build:
     commands:
