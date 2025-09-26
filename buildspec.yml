@@ -10,10 +10,8 @@ phases:
     commands:
       - echo Logging in to Amazon ECR...
       - aws --version
-      - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-      - REPO_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_REPO_NAME}
-      - echo "Repository URI is $REPO_URI"
-      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+      - aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin 005878674861.dkr.ecr.us-east-1.amazonaws.com
+      - REPO_URI=005878674861.dkr.ecr.us-east-1.amazonaws.com/hello-world
   build:
     commands:
       - echo Building the Docker image...
@@ -23,11 +21,7 @@ phases:
     commands:
       - echo Pushing the Docker image...
       - docker push $REPO_URI:$IMAGE_TAG
-      - echo Writing imagedefinitions.json...
-      - printf '[{\"name\":\"hello-docker\",\"imageUri\":\"%s\"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
-      - echo Replacing image URI in CloudFormation template...
-      - if [ -f cloudformation/ecs-update.yaml ]; then sed "s|REPLACE_IMAGE_URI|${REPO_URI}:${IMAGE_TAG}|g" cloudformation/ecs-update.yaml > cloudformation/ecs-update-generated.yaml && mv cloudformation/ecs-update-generated.yaml cloudformation/ecs-update.yaml; else echo "cloudformation/ecs-update.yaml not found"; fi
+      - printf '[{"name":"hello-docker","imageUri":"%s"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
 artifacts:
   files:
     - imagedefinitions.json
-    - cloudformation/ecs-update.yaml
