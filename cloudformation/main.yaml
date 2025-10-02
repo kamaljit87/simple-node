@@ -175,7 +175,7 @@ Resources:
       TaskRoleArn: !GetAtt ECSTaskRole.Arn
       ContainerDefinitions:
         - Name: app
-          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/hello-world:latest"
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/simple-node:latest"
           PortMappings:
             - ContainerPort: 3000
           Essential: true
@@ -245,7 +245,7 @@ Resources:
           version: 0.2
           env:
             variables:
-              IMAGE_REPO_NAME: hello-world
+              IMAGE_REPO_NAME: simple-node
               AWS_REGION: !Ref "AWS::Region"
           phases:
             pre_build:
@@ -262,7 +262,7 @@ Resources:
             post_build:
               commands:
                 - docker push $REPO_URI:$IMAGE_TAG
-                - printf '[{"name":"hello-docker","imageUri":"%s"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
+                - printf '[{"name":"simple-node","imageUri":"%s"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
                 - if [ -f cloudformation/ecs-update.yaml ]; then sed "s|REPLACE_IMAGE_URI|${REPO_URI}:${IMAGE_TAG}|g" cloudformation/ecs-update.yaml > cloudformation/ecs-update-generated.yaml && mv cloudformation/ecs-update-generated.yaml cloudformation/ecs-update.yaml; fi
       Artifacts:
         Type: S3
