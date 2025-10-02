@@ -301,7 +301,6 @@ Resources:
             Action: sts:AssumeRole
       Path: "/"
       ManagedPolicyArns:
-        - ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess
         - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
