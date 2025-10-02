@@ -163,22 +163,26 @@ Resources:
             Action: sts:AssumeRole
 
   TaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: ecs-app-task
-      Cpu: '256'
-      Memory: '512'
-      NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
-      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-      TaskRoleArn: !GetAtt ECSTaskRole.Arn
-      ContainerDefinitions:
-        - Name: app
-          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/simple-node:latest"
-          PortMappings:
-            - ContainerPort: 3000
-          Essential: true
+  Type: AWS::ECS::TaskDefinition
+  Properties:
+    Family: ecs-app-task
+    Cpu: '256'
+    Memory: '512'
+    NetworkMode: awsvpc
+    RequiresCompatibilities:
+      - FARGATE
+    ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+    TaskRoleArn: !GetAtt ECSTaskRole.Arn
+    RuntimePlatform:
+      CpuArchitecture: ARM64
+      OperatingSystemFamily: LINUX
+    ContainerDefinitions:
+      - Name: app
+        Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/simple-node:latest"
+        PortMappings:
+          - ContainerPort: 3000
+        Essential: true
+
 
   ECSService:
     Type: AWS::ECS::Service
