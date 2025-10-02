@@ -248,45 +248,45 @@ Resources:
                 Resource: "*"
 
   CodeBuildProject:
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Name: ecs-app-build
-      Source:
-        Type: GITHUB
-        Location: !Sub "https://github.com/${GitHubRepo}.git"
-        BuildSpec: |
-          version: 0.2
-          env:
-            variables:
-              IMAGE_REPO_NAME: hello-world
-              AWS_REGION: !Ref "AWS::Region"
-          phases:
-            pre_build:
-              commands:
-                - echo Logging in to Amazon ECR...
-                - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-                - REPO_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_REPO_NAME}
-                - echo "Repo: $REPO_URI"
-                - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-            build:
-              commands:
-                - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
-                - docker build -t $REPO_URI:$IMAGE_TAG .
-            post_build:
-              commands:
-                - docker push $REPO_URI:$IMAGE_TAG
-                - printf '[{\"name\":\"hello-docker\",\"imageUri\":\"%s\"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
-                - if [ -f cloudformation/ecs-update.yaml ]; then sed "s|REPLACE_IMAGE_URI|${REPO_URI}:${IMAGE_TAG}|g" cloudformation/ecs-update.yaml > cloudformation/ecs-update-generated.yaml && mv cloudformation/ecs-update-generated.yaml cloudformation/ecs-update.yaml; fi
-          artifacts:
-            files:
-              - imagedefinitions.json
-              - cloudformation/ecs-update.yaml
-      Environment:
-        Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: aws/codebuild/standard:6.0
-        PrivilegedMode: true
-      ServiceRole: !GetAtt CodeBuildRole.Arn
+  Type: AWS::CodeBuild::Project
+  Properties:
+    Name: ecs-app-build
+    Source:
+      Type: GITHUB
+      Location: !Sub "https://github.com/${GitHubRepo}.git"
+      BuildSpec: |
+        version: 0.2
+        env:
+          variables:
+            IMAGE_REPO_NAME: hello-world
+            AWS_REGION: !Ref "AWS::Region"
+        phases:
+          pre_build:
+            commands:
+              - echo Logging in to Amazon ECR...
+              - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+              - REPO_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_REPO_NAME}
+              - echo "Repo: $REPO_URI"
+              - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+          build:
+            commands:
+              - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+              - docker build -t $REPO_URI:$IMAGE_TAG .
+          post_build:
+            commands:
+              - docker push $REPO_URI:$IMAGE_TAG
+              - printf '[{"name":"hello-docker","imageUri":"%s"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
+              - if [ -f cloudformation/ecs-update.yaml ]; then sed "s|REPLACE_IMAGE_URI|${REPO_URI}:${IMAGE_TAG}|g" cloudformation/ecs-update.yaml > cloudformation/ecs-update-generated.yaml && mv cloudformation/ecs-update-generated.yaml cloudformation/ecs-update.yaml; fi
+    Artifacts:
+      Type: S3
+      Location: !Ref ArtifactBucket
+      Packaging: NONE
+    Environment:
+      Type: LINUX_CONTAINER
+      ComputeType: BUILD_GENERAL1_SMALL
+      Image: aws/codebuild/standard:6.0
+      PrivilegedMode: true
+    ServiceRole: !GetAtt CodeBuildRole.Arn
 
   # IAM Role for CodePipeline
   CodePipelineRole:
