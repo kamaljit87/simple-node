@@ -12,36 +12,91 @@ phases:
     runtime-versions:
       docker: 20
     commands:
-      - echo "install: aws & docker"
+      - echo "Installing dependencies - checking AWS CLI and Docker"
       - aws --version
+      - docker --version
 
   pre_build:
     commands:
-      - echo "set vars"
+      - echo "========================================"
+      - echo "Pre-Build Phase - Setting up variables"
+      - echo "========================================"
       - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - export IMAGE_TAG=${CODEBUILD_RESOLVED_SOURCE_VERSION:0:7}
       - export IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
       - echo "ACCOUNT_ID=$ACCOUNT_ID"
       - echo "IMAGE_TAG=$IMAGE_TAG"
       - echo "IMAGE_URI=$IMAGE_URI"
-      - echo "check/create ECR repo ${IMAGE_REPO_NAME}"
-      - if aws ecr describe-repositories --repository-names "${IMAGE_REPO_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then echo "ECR repo exists"; else echo "ECR repo missing. Creating..."; aws ecr create-repository --repository-name "${IMAGE_REPO_NAME}" --region "${AWS_REGION}" || { echo "create-repo failed"; exit 1; }; fi
+      - echo ""
+      - echo "Checking ECR repository ${IMAGE_REPO_NAME}..."
+      - |
+        if aws ecr describe-repositories --repository-names "${IMAGE_REPO_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
+          echo "✓ ECR repository exists - reusing it"
+        else
+          echo "✗ ECR repository not found - creating..."
+          aws ecr create-repository \
+            --repository-name "${IMAGE_REPO_NAME}" \
+            --region "${AWS_REGION}" \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256 || {
+            echo "ERROR: Failed to create ECR repository"
+            exit 1
+          }
+          echo "✓ ECR repository created successfully"
+        fi
+      - echo ""
+      - echo "Logging in to ECR..."
       - aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+      - echo "✓ Logged in to ECR successfully"
 
   build:
     commands:
-      - echo "building image"
-      - docker build -t "${IMAGE_REPO_NAME}" .
-      - docker tag "${IMAGE_REPO_NAME}" "${IMAGE_URI}"
+      - echo "========================================"
+      - echo "Build Phase - Building Docker image"
+      - echo "========================================"
+      - echo "Building image ${IMAGE_REPO_NAME}..."
+      - docker build -t "${IMAGE_REPO_NAME}:${IMAGE_TAG}" .
+      - docker tag "${IMAGE_REPO_NAME}:${IMAGE_TAG}" "${IMAGE_URI}"
+      - docker tag "${IMAGE_REPO_NAME}:${IMAGE_TAG}" "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_REPO_NAME}:latest"
+      - echo "✓ Docker image built successfully"
+      - echo ""
+      - echo "Pushing image to ECR..."
       - docker push "${IMAGE_URI}"
+      - docker push "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_REPO_NAME}:latest"
+      - echo "✓ Image pushed successfully"
 
   post_build:
     commands:
-      - echo "image pushed: ${IMAGE_URI}"
+      - echo "========================================"
+      - echo "Post-Build Phase - Deploying infrastructure"
+      - echo "========================================"
+      - echo "Image URI: ${IMAGE_URI}"
+      - echo ""
+      - echo "Creating imagedefinitions.json..."
       - printf '[{"name":"%s","imageUri":"%s"}]' "${IMAGE_REPO_NAME}" "${IMAGE_URI}" > imagedefinitions.json
       - cat imagedefinitions.json
-      - aws cloudformation deploy --template-file "${CF_TEMPLATE_FILE}" --stack-name "${STACK_NAME}" --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM --parameter-overrides ImageUri="${IMAGE_URI}" CreateEcr="false"
+      - echo ""
+      - echo "Deploying CloudFormation stack: ${STACK_NAME}..."
+      - |
+        aws cloudformation deploy \
+          --template-file "${CF_TEMPLATE_FILE}" \
+          --stack-name "${STACK_NAME}" \
+          --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
+          --parameter-overrides \
+            ImageUri="${IMAGE_URI}" \
+            EnvironmentName="${STACK_NAME}" \
+            CreateEcr="false" \
+          --no-fail-on-empty-changeset
+      - echo "✓ CloudFormation stack deployed successfully"
+      - echo ""
+      - echo "Getting stack outputs..."
+      - aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerURL`].OutputValue' --output text || echo "Stack outputs not available yet"
 
 artifacts:
   files:
     - imagedefinitions.json
+  name: BuildArtifact
+
+cache:
+  paths:
+    - '/root/.docker/**/*'
