@@ -1,7 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
-
 Description: >
-  CI/CD pipeline with ECR, ECS Fargate service behind an ALB (ALB listens on 80 -> container 3000).
+  Full CI/CD pipeline with ECR, ECS Fargate service behind an ALB (ALB listens on 80 -> container 3000),
   CodeBuild builds Docker image and deploys ECS service.
   CodePipeline removed; ECR repo assumed to exist.
 
@@ -13,9 +12,16 @@ Parameters:
     Type: String
     Default: main
     Description: Branch to use
+  CreateEcr:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Whether to create ECR repository or assume it exists
+
+Conditions:
+  CreateEcrCondition: !Equals [ !Ref CreateEcr, "true" ]
 
 Resources:
-
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -31,7 +37,7 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.1.0/24
-      AvailabilityZone: !Select [0, !GetAZs '']
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
       MapPublicIpOnLaunch: true
 
   PublicSubnetB:
@@ -39,7 +45,7 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.2.0/24
-      AvailabilityZone: !Select [1, !GetAZs '']
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
       MapPublicIpOnLaunch: true
 
   InternetGateway:
@@ -103,11 +109,8 @@ Resources:
     Properties:
       Name: ecs-app-alb
       Scheme: internet-facing
-      Subnets:
-        - !Ref PublicSubnetA
-        - !Ref PublicSubnetB
-      SecurityGroups:
-        - !Ref ALBSecurityGroup
+      Subnets: [ !Ref PublicSubnetA, !Ref PublicSubnetB ]
+      SecurityGroups: [ !Ref ALBSecurityGroup ]
 
   ALBTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -133,7 +136,11 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref ALBTargetGroup
 
-  # Removed ECR repo creation since repo already exists
+  ECRRepo:
+    Type: AWS::ECR::Repository
+    Condition: CreateEcrCondition
+    Properties:
+      RepositoryName: hello-world
 
   ECSCluster:
     Type: AWS::ECS::Cluster
@@ -162,27 +169,38 @@ Resources:
               Service: ecs-tasks.amazonaws.com
             Action: sts:AssumeRole
 
-  TaskDefinition:
-  Type: AWS::ECS::TaskDefinition
-  Properties:
-    Family: ecs-app-task
-    Cpu: '256'
-    Memory: '512'
-    NetworkMode: awsvpc
-    RequiresCompatibilities:
-      - FARGATE
-    ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-    TaskRoleArn: !GetAtt ECSTaskRole.Arn
-    RuntimePlatform:
-      CpuArchitecture: ARM64
-      OperatingSystemFamily: LINUX
-    ContainerDefinitions:
-      - Name: app
-        Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/simple-node:latest"
-        PortMappings:
-          - ContainerPort: 3000
-        Essential: true
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}/simple-node"
+      RetentionInDays: 14
 
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: ecs-app-task
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: app
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/simple-node:latest"
+          PortMappings:
+            - ContainerPort: 3000
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: simple-node
 
   ECSService:
     Type: AWS::ECS::Service
@@ -205,9 +223,158 @@ Resources:
           ContainerName: app
           ContainerPort: 3000
 
-  
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: CodeBuildECRPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:BatchGetImage
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - s3:GetObject
+                  - s3:PutObject
+                  - iam:PassRole
+                Resource: "*"
 
-  
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: ecs-app-build
+      Source:
+        Type: GITHUB
+        Location: !Sub "https://github.com/${GitHubRepo}.git"
+        BuildSpec: |
+          version: 0.2
+          env:
+            variables:
+              IMAGE_REPO_NAME: hello-world
+              AWS_REGION: !Ref "AWS::Region"
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                - REPO_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_REPO_NAME}
+                - echo "Repo: $REPO_URI"
+                - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+            build:
+              commands:
+                - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+                - docker build -t $REPO_URI:$IMAGE_TAG .
+            post_build:
+              commands:
+                - docker push $REPO_URI:$IMAGE_TAG
+                - printf '[{\"name\":\"hello-docker\",\"imageUri\":\"%s\"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
+                - if [ -f cloudformation/ecs-update.yaml ]; then sed "s|REPLACE_IMAGE_URI|${REPO_URI}:${IMAGE_TAG}|g" cloudformation/ecs-update.yaml > cloudformation/ecs-update-generated.yaml && mv cloudformation/ecs-update-generated.yaml cloudformation/ecs-update.yaml; fi
+          artifacts:
+            files:
+              - imagedefinitions.json
+              - cloudformation/ecs-update.yaml
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:6.0
+        PrivilegedMode: true
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodePipelineFullAccess
+        - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonECS_FullAccess
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: '1'
+              OutputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                Owner: !Select [0, !Split ['/', !Ref GitHubRepo]]
+                Repo: !Select [1, !Split ['/', !Ref GitHubRepo]]
+                Branch: !Ref GitHubBranch
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: CloudFormationDeploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                StackName: ecs-app-service-stack
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: BuildOutput::cloudformation/ecs-update.yaml
+              InputArtifacts:
+                - Name: BuildOutput
+
 Outputs:
   ALBDNS:
     Description: ALB DNS name (use as origin or to test)
