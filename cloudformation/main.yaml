@@ -3,17 +3,6 @@ Description: >
   Full CI/CD pipeline with ECR, ECS Fargate service behind an ALB (ALB listens on 80 -> container 3000),
   CodeBuild builds Docker image and pushes to ECR, CodePipeline orchestrates Source->Build->Deploy.
 
-Parameters:
-  GitHubRepo:
-    Type: String
-    Description: Owner/Repo (e.g. user/my-node-app)
-  GitHubBranch:
-    Type: String
-    Default: main
-  GitHubOAuthToken:
-    Type: String
-    NoEcho: true
-    Description: GitHub personal access token with repo access
 
 Resources:
 
