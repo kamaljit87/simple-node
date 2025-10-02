@@ -329,7 +329,6 @@ Resources:
                 Owner: !Select [0, !Split ['/', !Ref GitHubRepo]]
                 Repo: !Select [1, !Split ['/', !Ref GitHubRepo]]
                 Branch: !Ref GitHubBranch
-                OAuthToken: !Ref GitHubOAuthToken
               RunOrder: 1
         - Name: Build
           Actions:
