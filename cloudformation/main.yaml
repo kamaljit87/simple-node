@@ -14,7 +14,6 @@ Parameters:
     Description: Set "true" to let CFN create the ECR repository. CodeBuild already checks/creates ECR by default.
 
 Resources:
-
   ## VPC and Networking (2 AZs)
   VPC:
     Type: AWS::EC2::VPC
