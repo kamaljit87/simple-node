@@ -5,7 +5,7 @@ env:
     IMAGE_REPO_NAME: simple-node
     AWS_REGION: us-east-1
     STACK_NAME: simple-node-full-stack
-    CF_TEMPLATE_FILE: full-stack.yml
+    CF_TEMPLATE_FILE: main.yml
 
 phases:
   install:
