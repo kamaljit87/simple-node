@@ -5,7 +5,7 @@ env:
     IMAGE_REPO_NAME: simple-node
     AWS_REGION: us-east-1
     STACK_NAME: simple-node-full-stack
-    CF_TEMPLATE_FILE: main.yaml
+    CF_TEMPLATE_FILE: cloudformation/main.yaml
     CONTAINER_NAME: hello-docker
 
 phases:
@@ -54,7 +54,7 @@ phases:
       - printf '[{"name":"%s","imageUri":"%s"}]' "${CONTAINER_NAME}" "${IMAGE_URI}" > imagedefinitions.json
       - cat imagedefinitions.json
       - echo "Deploying CloudFormation stack..."
-      - aws cloudformation deploy --template-file "${CF_TEMPLATE_FILE}" --stack-name "${STACK_NAME}" --parameter-overrides ImageUri="${IMAGE_URI}" EnvironmentName="${STACK_NAME}" --no-fail-on-empty-changeset
+      - aws cloudformation deploy --template-file "${CF_TEMPLATE_FILE}" --stack-name "${STACK_NAME}" --parameter-overrides ImageUri="${IMAGE_URI}" EnvironmentName="${STACK_NAME}"
       - echo "Deployment complete"
       - echo "Getting stack outputs..."
       - aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query 'Stacks[0].Outputs' --output table
