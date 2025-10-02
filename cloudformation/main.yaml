@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
 
 Description: >
-  Full CI/CD pipeline with ECR, ECS Fargate service behind an ALB (ALB listens on 80 -> container 3000),
-  CodeBuild builds Docker image and pushes to ECR, CodePipeline orchestrates Source->Build->Deploy.
+  CI/CD pipeline with ECR, ECS Fargate service behind an ALB (ALB listens on 80 -> container 3000).
+  CodeBuild builds Docker image and deploys ECS service.
+  CodePipeline removed; ECR repo assumed to exist.
 
 Parameters:
   GitHubRepo:
@@ -12,11 +13,6 @@ Parameters:
     Type: String
     Default: main
     Description: Branch to use
-  CreateEcr:
-    Type: String
-    AllowedValues: ["true", "false"]
-    Default: "false"
-    Description: Whether to create ECR repository or assume it exists
 
 Resources:
 
@@ -137,11 +133,7 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref ALBTargetGroup
 
-  ECRRepo:
-    Type: AWS::ECR::Repository
-    Condition: CreateEcrCondition
-    Properties:
-      RepositoryName: hello-world
+  # Removed ECR repo creation since repo already exists
 
   ECSCluster:
     Type: AWS::ECS::Cluster
@@ -283,31 +275,11 @@ Resources:
         PrivilegedMode: true
       ServiceRole: !GetAtt CodeBuildRole.Arn
 
-  CodePipelineRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: codepipeline.amazonaws.com
-            Action: sts:AssumeRole
-      Path: "/"
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess
-        - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
-        - arn:aws:iam::aws:policy/AmazonECS_FullAccess
-        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
-
   ArtifactBucket:
     Type: AWS::S3::Bucket
     Properties:
       VersioningConfiguration:
         Status: Enabled
-
-  
 
 Outputs:
   ALBDNS:
