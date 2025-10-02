@@ -1,243 +1,88 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Full stack: VPC + Subnets + ECS Fargate service + ALB.
-  ImageUri is passed by CodeBuild. ECR creation is optional (default false).
+  Full CI/CD pipeline with ECR, ECS Fargate service behind an ALB (ALB listens on 80 -> container 3000),
+  CodeBuild builds Docker image and pushes to ECR, CodePipeline orchestrates Source->Build->Deploy.
 
 Parameters:
-  ImageUri:
+  GitHubRepo:
     Type: String
-    Description: Full ECR image URI (including tag). Provided by build.
-  CreateEcr:
+    Description: Owner/Repo (e.g. user/my-node-app)
+  GitHubBranch:
     Type: String
-    AllowedValues: [ "true", "false" ]
-    Default: "false"
-    Description: Set "true" to let CFN create the ECR repository. CodeBuild already checks/creates ECR by default.
+    Default: main
+  GitHubOAuthToken:
+    Type: String
+    NoEcho: true
+    Description: GitHub personal access token with repo access
 
 Resources:
-  ## VPC and Networking (2 AZs)
+
+  # VPC + subnets (simple public-only for demo)
   VPC:
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: 10.0.0.0/16
-      EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-vpc" }]
-
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-
-  AttachGateway:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref VPC
-      InternetGatewayId: !Ref InternetGateway
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: cicd-vpc
 
   PublicSubnetA:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.0.0/24
+      CidrBlock: 10.0.1.0/24
       AvailabilityZone: !Select [ 0, !GetAZs '' ]
       MapPublicIpOnLaunch: true
-      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-pub-a" }]
 
   PublicSubnetB:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
+      CidrBlock: 10.0.2.0/24
       AvailabilityZone: !Select [ 1, !GetAZs '' ]
       MapPublicIpOnLaunch: true
-      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-pub-b" }]
 
-  PrivateSubnetA:
-    Type: AWS::EC2::Subnet
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachIGW:
+    Type: AWS::EC2::VPCGatewayAttachment
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.10.0/24
-      AvailabilityZone: !Select [ 0, !GetAZs '' ]
-      MapPublicIpOnLaunch: false
-      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-priv-a" }]
-
-  PrivateSubnetB:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.11.0/24
-      AvailabilityZone: !Select [ 1, !GetAZs '' ]
-      MapPublicIpOnLaunch: false
-      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-priv-b" }]
+      InternetGatewayId: !Ref InternetGateway
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
-      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-pub-rt" }]
 
   PublicRoute:
     Type: AWS::EC2::Route
-    DependsOn: AttachGateway
+    DependsOn: AttachIGW
     Properties:
       RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
 
-  PublicSubnetARouteTableAssociation:
+  SubnetARouteTableAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicSubnetA
       RouteTableId: !Ref PublicRouteTable
 
-  PublicSubnetBRouteTableAssociation:
+  SubnetBRouteTableAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicSubnetB
       RouteTableId: !Ref PublicRouteTable
 
-  ## NAT Gateway for private subnets
-  NatEIP1:
-    Type: AWS::EC2::EIP
-    Properties: { Domain: vpc }
-
-  NatGW1:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatEIP1.AllocationId
-      SubnetId: !Ref PublicSubnetA
-
-  NatEIP2:
-    Type: AWS::EC2::EIP
-    Properties: { Domain: vpc }
-
-  NatGW2:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatEIP2.AllocationId
-      SubnetId: !Ref PublicSubnetB
-
-  PrivateRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-priv-rt" }]
-
-  PrivateRouteA:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGW1
-
-  PrivateRouteB:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGW2
-
-  PrivateSubnetARouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnetA
-      RouteTableId: !Ref PrivateRouteTable
-
-  PrivateSubnetBRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnetB
-      RouteTableId: !Ref PrivateRouteTable
-
-  ## Optional ECR repository
-  ECRRepository:
-    Type: AWS::ECR::Repository
-    Condition: CreateEcrCondition
-    Properties:
-      RepositoryName: simple-node
-      LifecyclePolicy:
-        LifecyclePolicyText: |
-          {
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Expire untagged images after 30 days",
-                "selection": {
-                  "tagStatus": "untagged",
-                  "countType": "sinceImagePushed",
-                  "countUnit": "days",
-                  "countNumber": 30
-                },
-                "action": { "type": "expire" }
-              }
-            ]
-          }
-
-  ## ECS cluster and roles
-  ECSCluster:
-    Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: !Sub "${AWS::StackName}-cluster"
-
-  ECSExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-      Path: /
-
-  ECSTaskRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      Path: /
-
-  LogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/ecs/${AWS::StackName}"
-      RetentionInDays: 14
-
-  TaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: simple-node-task
-      Cpu: '256'
-      Memory: '512'
-      NetworkMode: awsvpc
-      RequiresCompatibilities: [ FARGATE ]
-      ExecutionRoleArn: !GetAtt ECSExecutionRole.Arn
-      TaskRoleArn: !GetAtt ECSTaskRole.Arn
-      ContainerDefinitions:
-        - Name: simple-node
-          Image: !Ref ImageUri
-          Essential: true
-          PortMappings:
-            - ContainerPort: 3000
-              Protocol: tcp
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref LogGroup
-              awslogs-region: !Ref "AWS::Region"
-              awslogs-stream-prefix: simple-node
-
-  ## Security Groups
-  ALBSG:
+  # Security Groups
+  ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: ALB security group
+      GroupDescription: ALB security group - allow HTTP
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -245,38 +90,39 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
 
-  TaskSG:
+  ServiceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: ECS task SG
+      GroupDescription: ECS tasks security group - allow ALB to talk to container port 3000
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 3000
           ToPort: 3000
-          SourceSecurityGroupId: !Ref ALBSG
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
 
-  ## ALB, Target Group, Listener
+  # ALB
   ALB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: !Sub "${AWS::StackName}-alb"
-      Subnets: [ !Ref PublicSubnetA, !Ref PublicSubnetB ]
-      SecurityGroups: [ !Ref ALBSG ]
+      Name: ecs-app-alb
       Scheme: internet-facing
-      Type: application
+      Subnets: [ !Ref PublicSubnetA, !Ref PublicSubnetB ]
+      SecurityGroups: [ !Ref ALBSecurityGroup ]
 
   ALBTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: !Sub "${AWS::StackName}-tg"
+      VpcId: !Ref VPC
       Port: 3000
       Protocol: HTTP
-      VpcId: !Ref VPC
       TargetType: ip
       HealthCheckProtocol: HTTP
       HealthCheckPath: /
-      HealthCheckPort: '3000'
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: 200
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -288,7 +134,73 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref ALBTargetGroup
 
-  ## ECS Service
+  # ECR repository
+  Parameters:
+  CreateEcr:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: "Whether to create ECR repository or assume it exists"
+
+Conditions:
+  CreateEcrCondition: !Equals [ !Ref CreateEcr, "true" ]
+
+Resources:
+  ECRRepo:
+    Type: AWS::ECR::Repository
+    Condition: CreateEcrCondition
+    Properties:
+      RepositoryName: hello-world
+
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+
+  # Task execution role
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # Task role
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  # Initial Task Definition (uses latest image tag - will be updated by pipeline)
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: ecs-app-task
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [ FARGATE ]
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: app
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/hello-world:latest"
+          PortMappings:
+            - ContainerPort: 3000
+          Essential: true
+
+  # ECS Service
   ECSService:
     Type: AWS::ECS::Service
     DependsOn: ALBListener
@@ -300,31 +212,172 @@ Resources:
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED
-          SecurityGroups: [ !Ref TaskSG ]
-          Subnets: [ !Ref PrivateSubnetA, !Ref PrivateSubnetB ]
+          Subnets:
+            - !Ref PublicSubnetA
+            - !Ref PublicSubnetB
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
       LoadBalancers:
         - TargetGroupArn: !Ref ALBTargetGroup
-          ContainerName: simple-node
+          ContainerName: app
           ContainerPort: 3000
-      DeploymentConfiguration:
-        MaximumPercent: 200
-        MinimumHealthyPercent: 50
 
-Conditions:
-  CreateEcrCondition: !Equals [ !Ref CreateEcr, "true" ]
+  # IAM Role for CodeBuild
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: CodeBuildECRPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:BatchGetImage
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - s3:GetObject
+                  - s3:PutObject
+                  - iam:PassRole
+                Resource: "*"
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: ecs-app-build
+      Source:
+        Type: GITHUB
+        Location: !Sub "https://github.com/${GitHubRepo}.git"
+        BuildSpec: |
+          version: 0.2
+          env:
+            variables:
+              IMAGE_REPO_NAME: hello-world
+              AWS_REGION: !Ref "AWS::Region"
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                - REPO_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_REPO_NAME}
+                - echo "Repo: $REPO_URI"
+                - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+            build:
+              commands:
+                - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+                - docker build -t $REPO_URI:$IMAGE_TAG .
+            post_build:
+              commands:
+                - docker push $REPO_URI:$IMAGE_TAG
+                - printf '[{\"name\":\"hello-docker\",\"imageUri\":\"%s\"}]' $REPO_URI:$IMAGE_TAG > imagedefinitions.json
+                - if [ -f cloudformation/ecs-update.yaml ]; then sed "s|REPLACE_IMAGE_URI|${REPO_URI}:${IMAGE_TAG}|g" cloudformation/ecs-update.yaml > cloudformation/ecs-update-generated.yaml && mv cloudformation/ecs-update-generated.yaml cloudformation/ecs-update.yaml; fi
+          artifacts:
+            files:
+              - imagedefinitions.json
+              - cloudformation/ecs-update.yaml
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:6.0
+        PrivilegedMode: true
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+
+  # IAM Role for CodePipeline
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodePipelineFullAccess
+        - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonECS_FullAccess
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: '1'
+              OutputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                Owner: !Select [0, !Split ['/', !Ref GitHubRepo]]
+                Repo: !Select [1, !Split ['/', !Ref GitHubRepo]]
+                Branch: !Ref GitHubBranch
+                OAuthToken: !Ref GitHubOAuthToken
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: CloudFormationDeploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                StackName: ecs-app-service-stack
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: BuildOutput::cloudformation/ecs-update.yaml
+              InputArtifacts:
+                - Name: BuildOutput
 
 Outputs:
-  LoadBalancerDNS:
-    Description: ALB DNS name
+  ALBDNS:
+    Description: ALB DNS name (use as origin or to test)
     Value: !GetAtt ALB.DNSName
-
-  ClusterName:
-    Description: ECS cluster name
-    Value: !Ref ECSCluster
-
-  EcrRepositoryUri:
-    Description: ECR repository URI (if created by CFN)
-    Value: !If
-      - CreateEcrCondition
-      - !GetAtt ECRRepository.RepositoryUri
-      - !Ref "AWS::NoValue"
