@@ -3,6 +3,19 @@ Description: >
   Full CI/CD pipeline with ECR, ECS Fargate service behind an ALB (ALB listens on 80 -> container 3000),
   CodeBuild builds Docker image and pushes to ECR, CodePipeline orchestrates Source->Build->Deploy.
 
+Parameters:
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository in owner/repo format (e.g., kamaljit87/simple-node)
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Branch to use
+  CreateEcr:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Whether to create ECR repository or assume it exists
 
 Resources:
 
@@ -124,17 +137,6 @@ Resources:
           TargetGroupArn: !Ref ALBTargetGroup
 
   # ECR repository
-  Parameters:
-  CreateEcr:
-    Type: String
-    AllowedValues: ["true", "false"]
-    Default: "false"
-    Description: "Whether to create ECR repository or assume it exists"
-
-Conditions:
-  CreateEcrCondition: !Equals [ !Ref CreateEcr, "true" ]
-
-Resources:
   ECRRepo:
     Type: AWS::ECR::Repository
     Condition: CreateEcrCondition
@@ -201,10 +203,10 @@ Resources:
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED
-          Subnets:
+          Subnets: 
             - !Ref PublicSubnetA
             - !Ref PublicSubnetB
-          SecurityGroups:
+          SecurityGroups: 
             - !Ref ServiceSecurityGroup
       LoadBalancers:
         - TargetGroupArn: !Ref ALBTargetGroup
@@ -262,7 +264,7 @@ Resources:
             pre_build:
               commands:
                 - echo Logging in to Amazon ECR...
-                - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
                 - REPO_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_REPO_NAME}
                 - echo "Repo: $REPO_URI"
                 - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
@@ -333,7 +335,6 @@ Resources:
                 Owner: !Select [0, !Split ['/', !Ref GitHubRepo]]
                 Repo: !Select [1, !Split ['/', !Ref GitHubRepo]]
                 Branch: !Ref GitHubBranch
-                OAuthToken: !Ref GitHubOAuthToken
               RunOrder: 1
         - Name: Build
           Actions:
@@ -365,6 +366,9 @@ Resources:
                 TemplatePath: BuildOutput::cloudformation/ecs-update.yaml
               InputArtifacts:
                 - Name: BuildOutput
+
+Conditions:
+  CreateEcrCondition: !Equals [ !Ref CreateEcr, "true" ]
 
 Outputs:
   ALBDNS:
